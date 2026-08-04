@@ -143,11 +143,8 @@ Ce NU este încă implementat și ar trebui adăugat pentru nota 7-8:
     câtorva rânduri unde y_pred != y_test și o discuție despre de ce sunt
     greu de clasificat) — momentan avem doar agregatul din matricea de
     confuzie și classification_report, fără exemple concrete comentate.
-
-Recomandare: acestea sunt cele două extensii cel mai ușor de adăugat pornind
-de la codul existent, deoarece toate piesele (pipeline, split, predicții,
-matrice de confuzie) sunt deja pregătite pentru a fi reutilizate.
-
+    Dar aici putem vedea din matricea de confuzie cam unde ar fi elementele
+    comune intre echipe.
 
 ============================================================
 ENGLISH TRANSLATION
