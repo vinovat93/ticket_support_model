@@ -74,6 +74,23 @@ python main.py
 
 This trains the model on the CSV data, prints evaluation metrics (accuracy, precision, recall, F1), saves a confusion matrix plot, persists the trained pipeline to disk, and runs a few sample predictions.
 
+### Command-line options
+
+```bash
+python main.py --to_train
+```
+Trains the model on the CSV data and saves it to `MODEL_PATH` before predicting.
+
+```bash
+python main.py --to_calibrate
+```
+Runs `GridSearchCV` to search for the best hyperparameters (does not train or save the final model).
+
+```bash
+python main.py
+```
+No flags — skips training/calibration and just runs predictions on the sample tickets using the previously saved model.
+
 ## Deactivating the virtual environment
 
 ```bash

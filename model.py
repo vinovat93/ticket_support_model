@@ -29,7 +29,7 @@ STOPWORDS = {
 RANDOM_STATE = 42
 CSV_PATH   = r"D:\Projects\models\it_support_tickets.csv"
 MODEL_PATH = r"D:\Projects\models\ticket_predict\ticket_model.joblib"
-pd.set_option("display.max_colwidth", 80)
+pd.set_option("display.max_colwidth", 120)
 
 
 class Model():
