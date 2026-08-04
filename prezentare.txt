@@ -1,0 +1,311 @@
+PREZENTARE PROIECT
+Clasificarea automată a tichetelor de suport IT pe echipe
+============================================================
+
+Scop: pe baza textului unui tichet de suport (câmpul "description"), modelul
+prezice automat echipa care ar trebui să îl preia (câmpul "assigned_team").
+
+
+1. EXPLORAREA ȘI ÎNȚELEGEREA DATELOR
+------------------------------------
+
+Setul de date (it_support_tickets.csv) conține 1500 de tichete, împărțite
+perfect egal pe 10 echipe, câte 150 de tichete fiecare:
+Applications, Endpoint Management, Security, Email & Collaboration,
+Identity & Access, Hardware, Telephony, Database, Network,
+Cloud & Infrastructure.
+
+Fiind un set perfect echilibrat, nu a fost nevoie de class_weight sau
+tehnici de balansare — acuratețea și F1-macro pot fi comparate direct
+între echipe, fără riscul ca o clasă majoritară să domine rezultatele.
+
+Lungimea textelor este de asemenea analizată: descrierile au în medie
+~117 caractere, cu minim 52 și maxim 245 — sunt texte scurte, de tip
+"mesaj către help-desk", nu documente lungi.
+
+Explorarea inițială (load_data) trece prin:
+  - df.shape / df.head() / df.info() / df.describe() — verificare rapidă a
+    formei și tipurilor de date;
+  - top_words() — cele mai frecvente cuvinte, per total și per echipă, ca
+    să vedem dacă există cuvinte "zgomot" (ex: "hi", "help", "new") care ar
+    trebui eliminate ca stopwords, și ce cuvinte sunt de fapt caracteristice
+    fiecărei echipe (ex: pentru Telephony apar frecvent "phone",
+    "voicemail", "extension");
+  - verificarea tag-urilor HTML și a caracterelor non-ASCII rămase în text,
+    urmată de curățarea lor (encode/decode ascii, ignorând ce nu se poate
+    reprezenta).
+
+Verificarea duplicatelor și a tichetelor aproape identice este tratată
+explicit, înainte de orice split:
+  - df.duplicated(subset=["description"]) detectează tichetele cu text
+    identic, care sunt eliminate cu drop_duplicates() — dacă rămâneau, ar fi
+    putut ajunge exact aceeași propoziție și în train, și în test, ceea ce
+    ar fi produs o evaluare artificial de bună (data leakage);
+  - în plus, este verificat și cazul mai grav în care același text apare cu
+    echipe diferite atribuite (groupby("description")["assigned_team"]
+    .nunique() > 1), semn de etichetare inconsistentă în date.
+
+Observație notată explicit în cod: pe categoria Telephony, modelul obținea
+inițial scoruri perfecte (precision/recall/f1 = 1.00). La prima vedere pare
+data leakage, dar analiza tichetelor Telephony (unicitate, duplicate) arată
+că explicația reală este vocabularul foarte specific și greu de confundat
+al acestei echipe ("phone", "voicemail", "extension") — un exemplu de clasă
+"ușoară" pentru model. În contrast, echipele care descriu simptome generice
+("nu funcționează", "primesc o eroare", fără termeni tehnici specifici) sunt
+mai greu de separat, pentru că vocabularul se suprapune între mai multe
+echipe — acestea sunt cazurile ambigue.
+
+
+2. PREPROCESAREA TEXTULUI
+--------------------------
+
+Curățarea textului (clean_text) este simplă și explicabilă:
+  - conversie la litere mici;
+  - eliminarea a tot ce nu e literă sau spațiu (cifre, punctuație, simboluri);
+  - eliminarea unei liste custom de stopwords (STOPWORDS), formată din cuvinte
+    fără valoare discriminativă pentru clasificare (articole, pronume,
+    auxiliare, dar și cuvinte de "politețe" specifice tichetelor: "hi",
+    "new", "help").
+
+Split-ul train/test este stratificat și făcut ÎNAINTE de antrenarea
+vectorizatorului: train_test_split(..., test_size=0.25, stratify=y). Astfel
+fiecare echipă apare proporțional (75%/25%) în ambele seturi, evitând
+situația în care o echipă întreagă ar ajunge doar în test.
+
+Pipeline-ul (build_pipeline) leagă cei trei pași într-un singur obiect
+sklearn.Pipeline:
+  1. clean   — FunctionTransformer peste clean_series (curățarea text de mai
+               sus, aplicată consistent la antrenare și la predicție);
+  2. tfidf   — TfidfVectorizer(ngram_range=(1,2), max_features=5000,
+               sublinear_tf=True) — transformă textul curățat în vectori
+               numerici, ținând cont și de perechi de cuvinte (bigrame),
+               nu doar de cuvinte izolate;
+  3. clf     — algoritmul de clasificare (LogisticRegression pentru
+               modelul final, DummyClassifier pentru baseline).
+
+Punctul cheie pentru evitarea data leakage: pipeline.fit(X_train, y_train)
+antrenează TF-IDF-ul DOAR pe vocabularul din train; testul este transformat
+ulterior, folosind acest vocabular deja fixat, fără să "vadă" niciun cuvânt
+nou din test în etapa de antrenare.
+
+
+3. EVALUAREA MODELULUI DE BAZĂ
+-------------------------------
+
+Modelul de bază este LogisticRegression (C=5.0, max_iter=1000,
+solver="lbfgs"), antrenat în pipeline-ul descris mai sus.
+
+Ca punct de referință (baseline), este antrenat în paralel și un
+DummyClassifier (strategy="most_frequent"), pe exact același split — astfel
+se poate arăta clar cât de mult adaugă modelul real față de o predicție
+"naivă" (ghicește mereu clasa majoritară).
+
+Sunt raportate:
+  - accuracy și precision/recall/F1 cu average="macro" (fiecare echipă
+    contează egal, indiferent de câte tichete are — relevant pentru un
+    dataset echilibrat ca al nostru);
+  - un tabel-rezumat care compară direct LogisticRegression vs
+    DummyClassifier pe aceleași 4 metrici;
+  - classification_report complet, cu scor detaliat pe fiecare echipă;
+  - matricea de confuzie (plot_confusion_matrix), afișată ca heatmap și
+    salvată ca imagine (confusion_matrix.png) — arată exact ce echipe se
+    confundă între ele.
+
+Funcția de predicție (predict) primește o listă de texte brute de tichete
+și întoarce un DataFrame cu 3 coloane: ticket, team (echipa recomandată) și
+confidence (probabilitatea maximă întoarsă de model, între 0 și 1). Dacă
+încrederea modelului este sub 0.5 (mai nesigur decât o monedă aruncată),
+funcția nu recomandă nicio echipă ("No team recommended"), în loc să forțeze
+o predicție nesigură. Modelul antrenat este salvat pe disc cu joblib, astfel
+încât predicția să nu necesite reantrenare. În main.py, funcția este
+demonstrată pe 10 scenarii realiste de tichete IT (API care întoarce 500,
+pipeline CI/CD blocat, cont blocat cu token de resetare expirat etc.).
+
+
+CERINȚE SUPLIMENTARE PENTRU NOTA 7-8 — stadiul actual
+-------------------------------------------------------
+
+Ce este deja acoperit de cod:
+  - calibrarea hiperparametrilor (parameter_calibration): GridSearchCV cu
+    StratifiedKFold (5 fold-uri), care caută cea mai bună combinație de
+    max_features, ngram_range, min_df pentru TF-IDF și C, class_weight
+    pentru LogisticRegression, optimizând F1-macro;
+  - organizarea codului într-o clasă Model, cu metode clare și separate
+    (load_data, build_pipeline, train, predict, parameter_calibration) și
+    salvarea modelului final ales, prin joblib.
+
+Ce NU este încă implementat și ar trebui adăugat pentru nota 7-8:
+  - o comparație cu un AL DOILEA model clasic (ex: SVM, Naive Bayes) sau cu
+    DistilBERT, evaluat pe același test set și aceleași metrici — momentan
+    singura comparație este cu DummyClassifier, care este doar un punct de
+    referință minimal, nu un "al doilea model" propriu-zis;
+  - o analiză explicită a exemplelor clasificate greșit (ex: extragerea
+    câtorva rânduri unde y_pred != y_test și o discuție despre de ce sunt
+    greu de clasificat) — momentan avem doar agregatul din matricea de
+    confuzie și classification_report, fără exemple concrete comentate.
+
+Recomandare: acestea sunt cele două extensii cel mai ușor de adăugat pornind
+de la codul existent, deoarece toate piesele (pipeline, split, predicții,
+matrice de confuzie) sunt deja pregătite pentru a fi reutilizate.
+
+
+============================================================
+ENGLISH TRANSLATION
+============================================================
+
+PRESENTATION
+Automatic classification of IT support tickets by team
+============================================================
+
+Goal: based on the text of a support ticket (the "description" field), the
+model automatically predicts which team should handle it (the
+"assigned_team" field).
+
+
+1. DATA EXPLORATION AND UNDERSTANDING
+--------------------------------------
+
+The dataset (it_support_tickets.csv) contains 1500 tickets, split perfectly
+evenly across 10 teams, 150 tickets each: Applications, Endpoint
+Management, Security, Email & Collaboration, Identity & Access, Hardware,
+Telephony, Database, Network, Cloud & Infrastructure.
+
+Since the dataset is perfectly balanced, there was no need for
+class_weight or other balancing techniques — accuracy and macro-F1 can be
+compared directly across teams, without the risk of a majority class
+dominating the results.
+
+Text length is also analyzed: descriptions average ~117 characters, with a
+minimum of 52 and a maximum of 245 — these are short texts, more like
+"messages to a help desk" than long documents.
+
+The initial exploration (load_data) covers:
+  - df.shape / df.head() / df.info() / df.describe() — a quick check of
+    the shape and data types;
+  - top_words() — the most frequent words, overall and per team, to see
+    whether there are "noise" words (e.g. "hi", "help", "new") that should
+    be removed as stopwords, and which words are actually characteristic
+    of each team (e.g. Telephony frequently shows "phone", "voicemail",
+    "extension");
+  - checking for HTML tags and remaining non-ASCII characters in the text,
+    followed by cleaning them up (encode/decode ascii, ignoring anything
+    that can't be represented).
+
+Checking for duplicates and near-identical tickets is handled explicitly,
+before any split:
+  - df.duplicated(subset=["description"]) detects tickets with identical
+    text, which are removed with drop_duplicates() — if left in, the exact
+    same sentence could end up in both train and test, which would produce
+    an artificially good evaluation (data leakage);
+  - additionally, the more serious case where the same text appears with
+    different assigned teams is also checked
+    (groupby("description")["assigned_team"].nunique() > 1), a sign of
+    inconsistent labeling in the data.
+
+An observation explicitly noted in the code: for the Telephony category,
+the model initially achieved perfect scores (precision/recall/F1 = 1.00).
+At first glance this looks like data leakage, but analysis of the
+Telephony tickets (uniqueness, duplicates) shows the real explanation is
+the very specific vocabulary of this team ("phone", "voicemail",
+"extension") — an example of an "easy" class for the model. In contrast,
+teams that describe generic symptoms ("it's not working", "I'm getting an
+error", with no specific technical terms) are harder to separate, because
+the vocabulary overlaps across several teams — these are the ambiguous
+cases.
+
+
+2. TEXT PREPROCESSING
+-----------------------
+
+Text cleaning (clean_text) is simple and explainable:
+  - convert to lowercase;
+  - remove everything that isn't a letter or a space (digits, punctuation,
+    symbols);
+  - remove a custom list of stopwords (STOPWORDS), made up of words with no
+    discriminative value for classification (articles, pronouns,
+    auxiliaries, but also "politeness" words specific to tickets: "hi",
+    "new", "help").
+
+The train/test split is stratified and done BEFORE training the
+vectorizer: train_test_split(..., test_size=0.25, stratify=y). This way
+each team appears proportionally (75%/25%) in both sets, avoiding a
+situation where an entire team could end up only in the test set.
+
+The pipeline (build_pipeline) ties the three steps together into a single
+sklearn.Pipeline object:
+  1. clean   — FunctionTransformer over clean_series (the text cleaning
+               described above, applied consistently at both training and
+               prediction time);
+  2. tfidf   — TfidfVectorizer(ngram_range=(1,2), max_features=5000,
+               sublinear_tf=True) — turns the cleaned text into numeric
+               vectors, taking into account word pairs (bigrams) as well
+               as single words;
+  3. clf     — the classification algorithm (LogisticRegression for the
+               final model, DummyClassifier for the baseline).
+
+The key point for avoiding data leakage: pipeline.fit(X_train, y_train)
+trains TF-IDF ONLY on the train vocabulary; the test set is transformed
+afterward, using this already-fixed vocabulary, without "seeing" any new
+word from the test set during training.
+
+
+3. BASELINE MODEL EVALUATION
+------------------------------
+
+The base model is LogisticRegression (C=5.0, max_iter=1000,
+solver="lbfgs"), trained inside the pipeline described above.
+
+As a reference point (baseline), a DummyClassifier (strategy=
+"most_frequent") is also trained in parallel, on the exact same split —
+this makes it possible to clearly show how much the real model adds
+compared to a "naive" prediction (always guessing the majority class).
+
+The following are reported:
+  - accuracy and precision/recall/F1 with average="macro" (each team
+    counts equally, regardless of how many tickets it has — relevant for
+    a balanced dataset like this one);
+  - a summary table that directly compares LogisticRegression vs
+    DummyClassifier on the same 4 metrics;
+  - a full classification_report, with a detailed score for each team;
+  - the confusion matrix (plot_confusion_matrix), shown as a heatmap and
+    saved as an image (confusion_matrix.png) — shows exactly which teams
+    get confused with each other.
+
+The prediction function (predict) takes a list of raw ticket texts and
+returns a DataFrame with 3 columns: ticket, team (the recommended team),
+and confidence (the maximum probability returned by the model, between 0
+and 1). If the model's confidence is below 0.5 (less certain than a coin
+flip), the function does not recommend any team ("No team recommended"),
+instead of forcing an uncertain prediction. The trained model is saved to
+disk with joblib, so that prediction doesn't require retraining. In
+main.py, the function is demonstrated on 10 realistic ticket scenarios
+(an API returning a 500 error, a stuck CI/CD pipeline, a locked account
+with an expired reset token, etc.).
+
+
+ADDITIONAL REQUIREMENTS FOR THE 7-8 GRADE — current status
+--------------------------------------------------------------
+
+Already covered by the code:
+  - hyperparameter calibration (parameter_calibration): GridSearchCV with
+    StratifiedKFold (5 folds), searching for the best combination of
+    max_features, ngram_range, min_df for TF-IDF and C, class_weight for
+    LogisticRegression, optimizing macro-F1;
+  - code organized into a Model class, with clear, separate methods
+    (load_data, build_pipeline, train, predict, parameter_calibration) and
+    the final chosen model saved via joblib.
+
+Not yet implemented, and worth adding for the 7-8 grade:
+  - a comparison with a SECOND classical model (e.g. SVM, Naive Bayes) or
+    with DistilBERT, evaluated on the same test set and the same metrics —
+    currently the only comparison is against DummyClassifier, which is
+    just a minimal reference point, not a real "second model";
+  - an explicit analysis of misclassified examples (e.g. extracting a few
+    rows where y_pred != y_test and discussing why they're hard to
+    classify) — currently we only have the aggregate from the confusion
+    matrix and classification_report, without concrete, commented
+    examples.
+
+Recommendation: these are the two extensions easiest to add on top of the
+existing code, since all the pieces (pipeline, split, predictions,
+confusion matrix) are already in place to be reused.
