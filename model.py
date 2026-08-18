@@ -78,11 +78,16 @@ class Model():
     def load_data(self):
         # Citeste CSV-ul ca un tabel (DataFrame)
         df = pd.read_csv(self.csv_path)
-
-        df.shape # câte rânduri, câte coloane
-        df.head(10) # primele rânduri
-        df.info() # tipuri de date, valori non-null
-        df.describe(include='all') # statistici de bază
+        print("<<<<<<<<<<<<<<<<================= - ===========================>>>>>>>>>>>>>>>\n")
+        print("Shape",df.shape) # câte rânduri, câte coloane
+        print("<<<<<<<<<<<<<<<<================= - ===========================>>>>>>>>>>>>>>>\n")
+        print("Head",df.head(10)) # primele rânduri
+        print("<<<<<<<<<<<<<<<<================= - ===========================>>>>>>>>>>>>>>>\n")
+        print("Info",df.info()) # tipuri de date, valori non-null
+        print("<<<<<<<<<<<<<<<<================= - ===========================>>>>>>>>>>>>>>>\n")
+        print("Describe",df.describe(include='all')) # statistici de bază
+        print("<<<<<<<<<<<<<<<<================= - ===========================>>>>>>>>>>>>>>>\n")
+        print("Team counts",df['assigned_team'].value_counts())
 
         # Top words pentru a vedea daca trebuie sterse anumite cuvinte des intalnite
         print("<<<<<<<<<<<<<<<<================= TOP WORDS ===========================>>>>>>>>>>>>>>>\n")
